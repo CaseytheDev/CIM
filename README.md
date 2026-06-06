@@ -1,79 +1,76 @@
-# CIM — Casey's Inventory Management
+# CIM - Casey's Inventory Management
 
-CIM is a **Space Engineers Programmable Block inventory management script**.
+CIM is a Space Engineers inventory script built for the **Stone Industries** server.
 
-It was made specifically for the **Stone Industries Space Engineers server**.
+It runs in a Programmable Block and handles the usual base inventory stuff: sorting cargo, keeping some containers stocked, showing cargo/tank info on LCDs, listing item totals, and topping reactors with a small amount of uranium.
 
-It sorts cargo, manages LCDs, tracks whole-grid item totals, supports special stocked containers, helps with modded item names, can top up reactors, and can avoid docked ships when configured.
-
-> Paste the script into a **Programmable Block**. No timer block is required.
+No timer block needed.
 
 ## Support
 
-Need help or want to report an issue?
+Stone Industries Discord:
 
-Join the Stone Industries Discord:
+https://discord.gg/sigaming
 
-> **SI Discord:** https://discord.gg/sigaming
+My Discord for CIM support/suggestions:
 
-Join my discord for support and suggestions!
-
-> **My Discord:** https://discord.gg/RsH33Wr6Vy
-
+https://discord.gg/RsH33Wr6Vy
 
 ---
 
-## Quick install from GitHub
+## Installing from GitHub
 
-1. Open **CIM.cs** in this GitHub repository.
+1. Open `CIM.cs` in this repo.
 2. Click **Raw**.
-3. Select all text and copy it.
-4. In Space Engineers, build or open a **Programmable Block**.
+3. Copy the whole page.
+4. In Space Engineers, open a **Programmable Block**.
 5. Click **Edit**.
-6. Paste the full script.
+6. Paste the script in.
 7. Click **Check Code**.
 8. Click **Remember & Exit**.
 
-CIM starts running by itself on the grid the Programmable Block is on.
+After that, it should start running on its own.
 
 ---
 
-## Basic cargo setup
+## Cargo tags
 
-Add one CIM tag to each cargo container name.
+Put one of these tags in the name of each cargo container:
 
-| Tag | Stores |
+| Tag | Used for |
 | --- | --- |
-| `[CIM:Ore]` | Ore |
-| `[CIM:Ingot]` | Ingots |
-| `[CIM:Component]` | Components |
-| `[CIM:Tool]` | Tools |
-| `[CIM:Ammo]` | Ammo |
-| `[CIM:Bottle]` | Bottles |
-| `[CIM:All]` | Unknown items / missing categories |
+| `[CIM:Ore]` | ore |
+| `[CIM:Ingot]` | ingots |
+| `[CIM:Component]` | components |
+| `[CIM:Tool]` | tools |
+| `[CIM:Ammo]` | ammo |
+| `[CIM:Bottle]` | bottles |
+| `[CIM:All]` | all normal item types / missing typed categories |
+| `[CIM:Unknown]` | unknown or modded items CIM cannot classify |
 
-Example cargo names:
+Example names:
 
 ```text
 Large Cargo [CIM:Component]
 Large Cargo [CIM:Ore]
 Large Cargo [CIM:Ingot]
 Large Cargo [CIM:All]
+Large Cargo [CIM:Unknown]
 ```
 
-If you do not tag cargo containers, CIM can try to auto-tag empty/unlabeled cargo containers for you.
+If you do not tag any cargo, CIM can try to auto-tag empty/unlabeled cargo containers.
 
-### Important `[CIM:All]` behavior
+`[CIM:All]` is the all-purpose fallback for normal item types like ore, ingots, tools, ammo, bottles, and components when a specific tagged container is missing.
 
-- `[CIM:All]` is mostly for unknown items or categories that do not have a container.
-- If `[CIM:Ingot]` exists but is full, ingots are left where they are instead of being dumped into `[CIM:All]`.
-- Example: nickel ingots should go to `[CIM:Ingot]`, not `[CIM:All]`.
+`[CIM:Unknown]` is for anything CIM cannot classify.
+
+If an ingot container exists but is full, extra ingots stay where they are instead of getting dumped into `[CIM:All]`.
 
 ---
 
-## LCD setup
+## LCDs
 
-### Main status LCD
+### Status LCD
 
 Name an LCD:
 
@@ -81,11 +78,9 @@ Name an LCD:
 LCD [CIM:Status]
 ```
 
-This shows CIM status, targets, gas totals, transfer counts, and runtime budget.
+Shows what the script is doing.
 
----
-
-### One-container or one-tank LCD
+### One cargo/tank LCD
 
 Name an LCD:
 
@@ -93,7 +88,7 @@ Name an LCD:
 LCD [CIM:ContainerLCD]
 ```
 
-Then put this in the LCD **Custom Data**:
+Put this in the LCD Custom Data:
 
 ```text
 Container=Large Cargo [CIM:Component]
@@ -105,11 +100,7 @@ Tank example:
 Container=Hydrogen Tank
 ```
 
-This LCD shows only the matched cargo container or tank.
-
----
-
-### Whole-grid item totals LCD
+### Whole-grid totals LCD
 
 Name an LCD:
 
@@ -117,13 +108,13 @@ Name an LCD:
 LCD [CIM:ItemsLCD]
 ```
 
-Then put one category in the LCD **Custom Data**:
+Put this in the LCD Custom Data:
 
 ```text
 Category=Component
 ```
 
-Other supported categories:
+Other choices:
 
 ```text
 Category=Ore
@@ -132,25 +123,22 @@ Category=Ammo
 Category=Tool
 Category=Bottle
 Category=All
+Category=Unknown
 ```
 
-This LCD shows totals from the entire managed grid, not just one cargo container.
-
-Only LCDs with `[CIM:ItemsLCD]` receive these item-total updates.
+This shows totals from the whole managed grid, not just one box.
 
 ---
 
-## Special stocked containers
+## Stocked containers
 
-Use this when you want a cargo container to always keep certain items stocked.
-
-Name a cargo container:
+For a box that should always keep certain items, name it like this:
 
 ```text
 Welder Supplies [CIM:Special]
 ```
 
-Put item targets in that container's **Custom Data**:
+Then put the wanted amounts in that cargo container's Custom Data:
 
 ```text
 Component/SteelPlate=200
@@ -158,75 +146,76 @@ Component/Construction=100
 HydrogenBottle=2
 ```
 
-CIM will try to pull those items into that container.
+CIM will try to keep those items in that box.
 
 ---
 
-## Modded items and learned names
+## Modded items
 
-CIM can learn item names when it sees them.
-
-Name an LCD:
+For learned item names, add an LCD named:
 
 ```text
 LCD [CIM:LearnedLCD]
 ```
 
-This LCD shows discovered item names that can be copied into special stocked containers.
+That LCD shows the item names CIM has seen. You can copy those names into stocked containers.
 
-CIM also has friendly display aliases for these tech items:
+These Stone Industries tech items are also renamed on LCDs:
 
-| Raw subtype | Display name |
+| Item | Shows as |
 | --- | --- |
 | `Tech2x` | Common Tech |
 | `Tech4x` | Rare Tech |
 | `Tech16x` | Prosonic |
 | `Tech32x` | Prosonic Tech |
 
-These are treated as components for sorting.
+They sort as components.
 
 ---
 
 ## Docked ships
 
-By default, CIM may manage connected ships on the same construct.
+By default, CIM can work across your own or same-faction connected grids. So if you dock your ship to your base, CIM can sort it and top up its reactors if the blocks are yours or shared with your faction.
 
-If you do **not** want CIM to touch a docked ship, tag the connector:
+It skips blocks that are not yours or faction-shared. That means it should not pull from or push into allied/enemy-owned grids.
+
+If you do not want CIM touching a docked ship, tag the connector:
 
 ```text
 Connector [CIM:NoDock]
 ```
 
-When that connector is connected, CIM skips the docked grid.
+When that connector is connected, the docked grid gets skipped.
+
+If you only want CIM to top up the docked ship's reactors, but **not** pull/sort its cargo, put this on either connector:
+
+```text
+Connector [NoPull]
+```
+
+With `[NoPull]`, CIM skips that ship's inventory and only does reactor uranium stabilizing if it can.
 
 ---
 
 ## Reactors
 
-CIM can top up reactors with uranium.
+CIM can top up reactors with uranium on your own grid, faction-shared grid, or docked ship.
 
-Default amount:
+Default is:
 
 ```text
 5 uranium ingots per reactor
 ```
 
-It does **not** dump all uranium into reactors.
+It does not dump all uranium into reactors.
+
+Allied/enemy-owned reactors are skipped unless they are actually shared to your faction.
 
 ---
 
-## Performance settings
+## If it lags
 
-For very large bases, lower these near the top of **CIM.cs**:
-
-```csharp
-const int MaxTransfersPerRun = 16;
-const int MaxItemLcdUpdatesPerRun = 2;
-const double RuntimeCheckLimitMs = 0.80;
-const double InstructionBudgetPercent = 0.80;
-```
-
-Suggested lower-lag values:
+For big bases, lower these near the top of the script:
 
 ```csharp
 const int MaxTransfersPerRun = 6;
@@ -235,54 +224,39 @@ const double RuntimeCheckLimitMs = 0.50;
 const double InstructionBudgetPercent = 0.60;
 ```
 
-Lower values reduce lag but make sorting and LCD updates slower.
+Lower values mean less lag, but slower sorting/LCD updates.
 
 ---
 
-## Tag cheat sheet
+## Tag list
 
-| Tag | Use |
+| Tag | What it does |
 | --- | --- |
-| `[CIM:Ore]` | Ore cargo |
-| `[CIM:Ingot]` | Ingot cargo |
-| `[CIM:Component]` | Component cargo |
-| `[CIM:Tool]` | Tool cargo |
-| `[CIM:Ammo]` | Ammo cargo |
-| `[CIM:Bottle]` | Bottle cargo |
-| `[CIM:All]` | Unknown / missing-category cargo |
-| `[CIM:Status]` | Main status LCD |
-| `[CIM:ContainerLCD]` | LCD for one cargo container or tank |
-| `[CIM:Container]` | Short version of `[CIM:ContainerLCD]` |
-| `[CIM:ItemsLCD]` | LCD for whole-grid item totals |
-| `[CIM:LearnedLCD]` | LCD for learned modded item names |
-| `[CIM:Special]` | Cargo that should stay stocked |
-| `[CIM:Ignore]` | Ignore this block |
-| `[CIM:Drain]` | Force CIM to empty this block |
-| `[CIM:NoSort]` | Do not sort this block/grid |
-| `[CIM:NoDock]` | Ignore docked ship on this connector |
-| `[CIM:P1]` | Priority cargo. Lower number fills first |
-
----
-
-## Optional manual run words
-
-Normal use does **not** require manual run words.
-
-If you open the Programmable Block and press **Run**, you can enter one of these:
-
-| Word | Action |
-| --- | --- |
-| `status` | Refreshes status output |
-| `rescan` | Finds blocks again |
-| `pause` | Pauses CIM |
-| `resume` | Resumes CIM |
-| `rename` | Updates cargo fill names |
+| `[CIM:Ore]` | ore cargo |
+| `[CIM:Ingot]` | ingot cargo |
+| `[CIM:Component]` | component cargo |
+| `[CIM:Tool]` | tool cargo |
+| `[CIM:Ammo]` | ammo cargo |
+| `[CIM:Bottle]` | bottle cargo |
+| `[CIM:All]` | all normal item types / fallback cargo |
+| `[CIM:Unknown]` | unknown or unclassified cargo |
+| `[CIM:Status]` | status LCD |
+| `[CIM:ContainerLCD]` | one cargo/tank LCD |
+| `[CIM:Container]` | short version of container LCD tag |
+| `[CIM:ItemsLCD]` | whole-grid item totals LCD |
+| `[CIM:LearnedLCD]` | learned item names LCD |
+| `[CIM:Special]` | stocked cargo container |
+| `[CIM:Ignore]` | ignore this block |
+| `[CIM:Drain]` | force this block to empty |
+| `[CIM:NoSort]` | do not sort this block/grid |
+| `[CIM:NoDock]` | skip docked ship on this connector |
+| `[NoPull]` | do not pull/sort docked ship cargo, only top up reactors |
+| `[CIM:P1]` | priority cargo, lower number fills first |
 
 ---
 
 ## Notes
 
-- CIM only works inside a Space Engineers **Programmable Block**.
-- It is not a normal desktop C# program.
-- It manages the grid/construct the Programmable Block can access.
-- LCD text size can be changed manually in the LCD settings if a list is too long.
+- This is for a Space Engineers Programmable Block.
+- It is not a normal C# app.
+- If an LCD list is too long, lower the LCD text size in-game.
