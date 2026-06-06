@@ -160,6 +160,17 @@ LCD [CIM:LearnedLCD]
 
 That LCD shows the item names CIM has seen. You can copy those names into stocked containers.
 
+These Stone Industries tech items are also renamed on LCDs:
+
+| Item | Shows as |
+| --- | --- |
+| `Tech2x` | Common Tech |
+| `Tech4x` | Rare Tech |
+| `Tech16x` | Prosonic |
+| `Tech32x` | Prosonic Tech |
+
+They sort as components.
+
 ---
 
 ## Docked ships
