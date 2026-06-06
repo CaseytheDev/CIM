@@ -1,6 +1,7 @@
 // Casey's Inventory Management (CIM)
 // Original Space Engineers Programmable Block script.
 // Paste this whole file into a programmable block and compile.
+
     // =========================================================
     // Setup tags
     // =========================================================
@@ -29,14 +30,58 @@
     const string TagNoPull = "[CIM:NoPull]";
     const string TagNoPullShort = "[NoPull]";
 
+    // =========================================================
+    // ISYS-style shared configuration
+    // =========================================================
+    // These are plain-name keywords CIM also understands, so setup can feel closer to ISYS.
+
+    // Cargo category keywords. Example: "Large Cargo Ores" works like [CIM:Ore].
+    const string OreContainerKeyword = "Ores";
+    const string IngotContainerKeyword = "Ingots";
+    const string ComponentContainerKeyword = "Components";
+    const string ToolContainerKeyword = "Tools";
+    const string AmmoContainerKeyword = "Ammo";
+    const string BottleContainerKeyword = "Bottles";
+    const string AllContainerKeyword = "All Items";
+    const string UnknownContainerKeyword = "Unknown Items";
+    const string SpecialContainerKeyword = "Special";
+
+    // Block name keywords to skip from normal sorting/counting.
+    string[] LockedContainerKeywords = { "Locked", "Control Station", "Control Seat", "Safe Zone" };
+    string[] HiddenContainerKeywords = { "Hidden" };
+
+    // Connector keywords borrowed from ISYS-style setup.
+    const string NoSortingKeyword = "[No Sorting]";
+    const string NoIimKeyword = "[No IIM]";
+    const string NoCimKeyword = "[No CIM]";
+
+    // LCD name keywords for people used to ISYS-like naming.
+    const string MainLCDKeyword = "CIM-main";
+    const string InventoryLCDKeyword = "CIM-inventory";
+    const string LearnedLCDKeyword = "CIM-learned";
+
     // Performance knobs. Lower MaxTransfersPerRun for giant bases.
-    const int MaxTransfersPerRun = 16;
-    const int RescanEveryRuns = 30;
+    const int MaxTransfersPerRun = 32;
+    const int RescanEveryRuns = 300;
     const int RenameEveryRuns = 10;
-    const int MaxItemLcdUpdatesPerRun = 2;
+    const int MaxRenameUpdatesPerRun = 8;
+    const int CountEveryRuns = 1;
+    const int CountRefreshEveryRuns = 60;
+    const int LcdEveryRuns = 1;
+    const int MaxRescanBlocksPerRun = 200;
+    const int MaxCountBlocksPerRun = 16;
+    const int MaxSortSourcesPerTask = 10;
+    const int MaxReactorChecksPerTask = 8;
+    const int MaxContainerLcdUpdatesPerRun = 1;
+    const int MaxContainerDisplayLines = 80;
+    const int MaxItemLcdUpdatesPerRun = 1;
+    const int MaxItemTotalLines = 120;
+    const int MaxLearnedLcdUpdatesPerRun = 1;
+    const int MaxLearnedLinesPerCategory = 20;
     const int ItemLcdVisibleLines = 18;
-    const double RuntimeCheckLimitMs = 0.80;
+    const double RuntimeCheckLimitMs = 1.50;
     const double InstructionBudgetPercent = 0.80;
+    const double DisplayInstructionBudgetPercent = 0.95;
 
     // Behavior knobs.
     bool IncludeConnectedSameConstruct = true;
@@ -67,16 +112,30 @@
     Dictionary<string, List<TargetBin>> _targets = new Dictionary<string, List<TargetBin>>();
     Dictionary<string, MyFixedPoint> _counts = new Dictionary<string, MyFixedPoint>();
     Dictionary<string, MyFixedPoint> _itemTotals = new Dictionary<string, MyFixedPoint>();
+    Dictionary<string, MyFixedPoint> _nextCounts = new Dictionary<string, MyFixedPoint>();
+    Dictionary<string, MyFixedPoint> _nextItemTotals = new Dictionary<string, MyFixedPoint>();
     Dictionary<string, string> _learnedItems = new Dictionary<string, string>();
     Dictionary<long, int> _itemLcdScrollLines = new Dictionary<long, int>();
+    Dictionary<long, string> _lastItemLcdText = new Dictionary<long, string>();
     List<string> _displayLines = new List<string>();
     StringBuilder _text = new StringBuilder(4096);
 
     int _runCounter;
     int _renameCounter;
+    int _countCounter;
+    int _lcdCounter;
+    int _taskIndex;
+    int _renameUpdateCursor;
+    int _countRefreshCounter;
     int _sourceCursor;
     int _specialCursor;
+    int _reactorCursor;
+    int _rescanCursor;
+    int _rescanPhase;
+    int _countCursor;
+    int _containerLcdCursor;
     int _itemLcdCursor;
+    int _learnedLcdCursor;
     int _lastTransferCount;
     int _specialTransferCount;
     int _reactorTransferCount;
@@ -88,6 +147,10 @@
     double _oxygenFilled;
     double _oxygenCapacity;
     bool _paused;
+    bool _rescanInProgress;
+    bool _hasCompletedScan;
+    bool _hasCompletedCount;
+    bool _countDirty = true;
     string _lastMessage = "Starting";
 
     string[] _categoryNames = new string[]
@@ -98,6 +161,11 @@
     string[] _autoAssignOrder = new string[]
     {
         "All", "Unknown", "Component", "Ore", "Ingot", "Tool", "Ammo", "Bottle"
+    };
+
+    string[] _taskNames = new string[]
+    {
+        "Gas", "Ore", "Ingot", "Other", "Special", "Reactor"
     };
 
     class TargetBin
@@ -128,7 +196,7 @@
 
     public Program()
     {
-        Runtime.UpdateFrequency = UpdateFrequency.Update100;
+        Runtime.UpdateFrequency = UpdateFrequency.Update10;
         InitTargets();
         LoadLearnedItems();
         Rescan();
@@ -156,7 +224,7 @@
         else if (argument == "rescan" || argument == "scan")
         {
             Rescan();
-            _lastMessage = "Manual rescan complete";
+            _lastMessage = "Manual rescan started";
         }
         else if (argument == "rename")
         {
@@ -182,18 +250,42 @@
             _runCounter++;
             _renameCounter++;
 
-            if (_runCounter >= RescanEveryRuns)
+            if (!_rescanInProgress && _runCounter >= RescanEveryRuns)
             {
                 _runCounter = 0;
                 Rescan();
             }
 
-            FillSpecialLoadouts();
-            BalanceReactors();
-            SortStep();
+            if (_rescanInProgress)
+                ContinueRescan();
+
+            if (!_rescanInProgress && _hasCompletedScan)
+            {
+                _countCounter++;
+                _countRefreshCounter++;
+
+                if (_countRefreshCounter >= CountRefreshEveryRuns)
+                {
+                    _countRefreshCounter = 0;
+                    _countDirty = true;
+                }
+
+                if (_countCounter >= CountEveryRuns && (_countDirty || _countCursor != 0 || !_hasCompletedCount))
+                {
+                    _countCounter = 0;
+                    CountItems();
+                }
+                else
+                {
+                    RunNextTask();
+                }
+            }
 
             if (_lastTransferCount > 0)
+            {
                 _totalTransfers += _lastTransferCount;
+                _countDirty = true;
+            }
 
             if (ShowFillPercentInNames && _renameCounter >= RenameEveryRuns)
             {
@@ -202,12 +294,16 @@
             }
         }
 
-        CountItems();
-        CountGasTanks();
-        WriteStatus(argument == "help");
-        WriteContainerDisplays();
-        WriteItemDisplays();
-        WriteLearnedDisplays();
+        _lcdCounter++;
+
+        if (_lcdCounter >= LcdEveryRuns || argument == "help")
+        {
+            _lcdCounter = 0;
+            WriteStatus(argument == "help");
+            WriteContainerDisplays();
+            WriteItemDisplays();
+            WriteLearnedDisplays();
+        }
     }
 
     void InitTargets()
@@ -229,66 +325,155 @@
         _learnedSurfaces.Clear();
         _containerDisplays.Clear();
         _itemDisplays.Clear();
+        _lastItemLcdText.Clear();
         _unassignedCargo.Clear();
         _allTargets.Clear();
         _specialTargets.Clear();
         _blocks.Clear();
+        _nextCounts.Clear();
+        _nextItemTotals.Clear();
+        _countCursor = 0;
+        _rescanCursor = 0;
+        _rescanPhase = 1;
+        _rescanInProgress = true;
+        _hasCompletedScan = false;
+        _hasCompletedCount = false;
+        _countDirty = true;
+        _countRefreshCounter = 0;
+        _lastMessage = "Rescanning";
 
         GridTerminalSystem.GetBlocks(_blocks);
-        FindBlockedDockedGrids();
+        ContinueRescan();
+    }
 
-        for (int i = 0; i < _blocks.Count; i++)
+    void ContinueRescan()
+    {
+        if (!_rescanInProgress)
+            return;
+
+        int checkedBlocks = 0;
+        while (!ShouldYield() && checkedBlocks < MaxRescanBlocksPerRun)
         {
-            IMyTerminalBlock block = _blocks[i];
-            if (!IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block))
-                continue;
-
-            if (IsNoPullDockedGrid(block.CubeGrid))
+            if (_rescanPhase == 1)
             {
-                IMyReactor noPullReactor = block as IMyReactor;
-                if (noPullReactor != null)
-                    _reactors.Add(noPullReactor);
+                int dockRuleLimit = MaxRescanBlocksPerRun * 4;
+                int checkedDockRules = 0;
+                while (!ShouldYield() && _rescanCursor < _blocks.Count && checkedDockRules < dockRuleLimit)
+                {
+                    RegisterDockRule(_blocks[_rescanCursor]);
+                    _rescanCursor++;
+                    checkedDockRules++;
+                }
 
-                continue;
+                if (_rescanCursor >= _blocks.Count)
+                {
+                    _rescanPhase = 2;
+                    _rescanCursor = 0;
+                    checkedBlocks = 0;
+                    continue;
+                }
+
+                _lastMessage = "Rescanning dock rules " + _rescanCursor + "/" + _blocks.Count;
+                return;
             }
 
-            RegisterStatusSurface(block);
-            RegisterContainerDisplay(block);
-            RegisterItemDisplay(block);
-            RegisterLearnedSurface(block);
-
-            IMyGasTank gasTank = block as IMyGasTank;
-            if (gasTank != null)
-                _gasTanks.Add(gasTank);
-
-            IMyReactor reactor = block as IMyReactor;
-            if (reactor != null)
-                _reactors.Add(reactor);
-
-            if (!block.HasInventory)
-                continue;
-
-            TargetBin target = MakeTarget(block);
-            if (target != null)
+            if (_rescanCursor >= _blocks.Count)
             {
-                RegisterTarget(target);
-                continue;
+                FinishRescan();
+                return;
             }
 
-            IMyCargoContainer cargo = block as IMyCargoContainer;
-            if (cargo != null && IsAutoAssignableCargo(cargo))
-            {
-                _unassignedCargo.Add(cargo);
-                continue;
-            }
+            RegisterScannedBlock(_blocks[_rescanCursor]);
+            _rescanCursor++;
+            checkedBlocks++;
+            _lastMessage = "Rescanning blocks " + _rescanCursor + "/" + _blocks.Count;
+        }
+    }
 
-            if (IsSafeSource(block))
-                _sources.Add(block);
+    void RegisterDockRule(IMyTerminalBlock block)
+    {
+        IMyShipConnector connector = block as IMyShipConnector;
+        if (connector == null)
+            return;
+
+        if (!connector.IsSameConstructAs(Me))
+            return;
+
+        if (!HasToken(connector, TagNoDock) && !HasToken(connector, TagNoSort) && !HasToken(connector, NoSortingKeyword) && !HasToken(connector, NoIimKeyword) && !HasToken(connector, NoCimKeyword))
+        {
+            if (!HasNoPullToken(connector))
+                return;
+
+            if (connector.Status != MyShipConnectorStatus.Connected || connector.OtherConnector == null)
+                return;
+
+            if (connector.CubeGrid == Me.CubeGrid)
+                AddNoPullDockedGrid(connector.OtherConnector.CubeGrid);
+            else
+                AddNoPullDockedGrid(connector.CubeGrid);
+
+            return;
         }
 
+        if (connector.Status != MyShipConnectorStatus.Connected || connector.OtherConnector == null)
+            return;
+
+        AddBlockedDockedGrid(connector.OtherConnector.CubeGrid);
+    }
+
+    void RegisterScannedBlock(IMyTerminalBlock block)
+    {
+        if (block == null || !IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block))
+            return;
+
+        if (IsNoPullDockedGrid(block.CubeGrid))
+        {
+            IMyReactor noPullReactor = block as IMyReactor;
+            if (noPullReactor != null)
+                _reactors.Add(noPullReactor);
+
+            return;
+        }
+
+        RegisterStatusSurface(block);
+        RegisterContainerDisplay(block);
+        RegisterItemDisplay(block);
+        RegisterLearnedSurface(block);
+
+        IMyGasTank gasTank = block as IMyGasTank;
+        if (gasTank != null)
+            _gasTanks.Add(gasTank);
+
+        IMyReactor reactor = block as IMyReactor;
+        if (reactor != null)
+            _reactors.Add(reactor);
+
+        if (!block.HasInventory)
+            return;
+
+        TargetBin target = MakeTarget(block);
+        if (target != null)
+        {
+            RegisterTarget(target);
+            return;
+        }
+
+        IMyCargoContainer cargo = block as IMyCargoContainer;
+        if (cargo != null && IsAutoAssignableCargo(cargo))
+        {
+            _unassignedCargo.Add(cargo);
+            return;
+        }
+
+        if (IsSafeSource(block))
+            _sources.Add(block);
+    }
+
+    void FinishRescan()
+    {
         AutoAssignMissingContainers();
 
-        for (int i = 0; i < _unassignedCargo.Count; i++)
+        for (int i = 0; i < _unassignedCargo.Count && !ShouldYield(); i++)
         {
             IMyCargoContainer cargo = _unassignedCargo[i];
             if (cargo != null && cargo.HasInventory && IsSafeSource(cargo))
@@ -301,8 +486,23 @@
             _sourceCursor = 0;
         if (_specialCursor >= _specialTargets.Count)
             _specialCursor = 0;
+        if (_reactorCursor >= _reactors.Count)
+            _reactorCursor = 0;
+        if (_renameUpdateCursor >= _allTargets.Count)
+            _renameUpdateCursor = 0;
+        if (_containerLcdCursor >= _containerDisplays.Count)
+            _containerLcdCursor = 0;
         if (_itemLcdCursor >= _itemDisplays.Count)
             _itemLcdCursor = 0;
+        if (_learnedLcdCursor >= _learnedSurfaces.Count)
+            _learnedLcdCursor = 0;
+
+        _rescanCursor = 0;
+        _rescanPhase = 0;
+        _rescanInProgress = false;
+        _hasCompletedScan = true;
+        _runCounter = 0;
+        _lastMessage = "Rescan complete";
     }
 
     void RegisterTarget(TargetBin target)
@@ -416,40 +616,6 @@
         return relation == MyRelationsBetweenPlayerAndBlock.Owner || relation == MyRelationsBetweenPlayerAndBlock.FactionShare;
     }
 
-    void FindBlockedDockedGrids()
-    {
-        for (int i = 0; i < _blocks.Count; i++)
-        {
-            IMyShipConnector connector = _blocks[i] as IMyShipConnector;
-            if (connector == null)
-                continue;
-
-            if (!connector.IsSameConstructAs(Me))
-                continue;
-
-            if (!HasToken(connector, TagNoDock) && !HasToken(connector, TagNoSort))
-            {
-                if (!HasNoPullToken(connector))
-                    continue;
-
-                if (connector.Status != MyShipConnectorStatus.Connected || connector.OtherConnector == null)
-                    continue;
-
-                if (connector.CubeGrid == Me.CubeGrid)
-                    AddNoPullDockedGrid(connector.OtherConnector.CubeGrid);
-                else
-                    AddNoPullDockedGrid(connector.CubeGrid);
-
-                continue;
-            }
-
-            if (connector.Status != MyShipConnectorStatus.Connected || connector.OtherConnector == null)
-                continue;
-
-            AddBlockedDockedGrid(connector.OtherConnector.CubeGrid);
-        }
-    }
-
     void AddNoPullDockedGrid(IMyCubeGrid grid)
     {
         if (grid == null || grid == Me.CubeGrid)
@@ -502,7 +668,8 @@
 
     bool IsNoSortBlocked(IMyTerminalBlock block)
     {
-        return HasToken(block, TagNoSort) || HasToken(block, TagNoDock);
+        return HasToken(block, TagNoSort) || HasToken(block, TagNoDock) || HasToken(block, NoSortingKeyword) || HasToken(block, NoIimKeyword) || HasToken(block, NoCimKeyword) ||
+            HasAnyKeyword(block, LockedContainerKeywords) || HasAnyKeyword(block, HiddenContainerKeywords);
     }
 
     bool IsSafeSource(IMyTerminalBlock block)
@@ -526,7 +693,7 @@
         if (!(block is IMyCargoContainer))
             return null;
 
-        bool special = HasToken(block, TagSpecial);
+        bool special = HasToken(block, TagSpecial) || Contains(block.CustomName, SpecialContainerKeyword);
         string category = special ? "Special" : GetContainerCategory(block);
         if (category == "")
             return null;
@@ -548,14 +715,14 @@
     string GetContainerCategory(IMyTerminalBlock block)
     {
         string data = (block.CustomName + "\n" + block.CustomData).ToLowerInvariant();
-        if (Contains(data, TagOre) || Contains(data, "ores")) return "Ore";
-        if (Contains(data, TagIngot) || Contains(data, "ingots")) return "Ingot";
-        if (Contains(data, TagComponent) || Contains(data, "components")) return "Component";
-        if (Contains(data, TagTool) || Contains(data, "tools")) return "Tool";
-        if (Contains(data, TagAmmo) || Contains(data, "ammo")) return "Ammo";
-        if (Contains(data, TagBottle) || Contains(data, "bottles")) return "Bottle";
-        if (Contains(data, TagAll) || Contains(data, "all items")) return "All";
-        if (Contains(data, TagUnknown) || Contains(data, "unknown items")) return "Unknown";
+        if (Contains(data, TagOre) || Contains(data, OreContainerKeyword)) return "Ore";
+        if (Contains(data, TagIngot) || Contains(data, IngotContainerKeyword)) return "Ingot";
+        if (Contains(data, TagComponent) || Contains(data, ComponentContainerKeyword)) return "Component";
+        if (Contains(data, TagTool) || Contains(data, ToolContainerKeyword)) return "Tool";
+        if (Contains(data, TagAmmo) || Contains(data, AmmoContainerKeyword)) return "Ammo";
+        if (Contains(data, TagBottle) || Contains(data, BottleContainerKeyword)) return "Bottle";
+        if (Contains(data, TagAll) || Contains(data, AllContainerKeyword)) return "All";
+        if (Contains(data, TagUnknown) || Contains(data, UnknownContainerKeyword)) return "Unknown";
         return "";
     }
 
@@ -621,7 +788,7 @@
 
     void RegisterStatusSurface(IMyTerminalBlock block)
     {
-        if (!HasToken(block, TagStatus))
+        if (!HasToken(block, TagStatus) && !Contains(block.CustomName, MainLCDKeyword))
             return;
 
         IMyTextPanel panel = block as IMyTextPanel;
@@ -664,7 +831,7 @@
 
     void RegisterLearnedSurface(IMyTerminalBlock block)
     {
-        if (!HasToken(block, TagLearnedLCD))
+        if (!HasToken(block, TagLearnedLCD) && !Contains(block.CustomName, LearnedLCDKeyword))
             return;
 
         IMyTextSurface surface = GetFirstTextSurface(block);
@@ -678,7 +845,7 @@
 
     void RegisterItemDisplay(IMyTerminalBlock block)
     {
-        if (!HasToken(block, TagItemsLCD))
+        if (!HasToken(block, TagItemsLCD) && !Contains(block.CustomName, InventoryLCDKeyword))
             return;
 
         IMyTextSurface surface = GetFirstTextSurface(block);
@@ -740,6 +907,32 @@
         return "All";
     }
 
+    void RunNextTask()
+    {
+        if (_taskIndex >= _taskNames.Length)
+            _taskIndex = 0;
+
+        string task = _taskNames[_taskIndex];
+        _lastMessage = "Task: " + task;
+
+        if (task == "Gas")
+            CountGasTanks();
+        else if (task == "Ore")
+            SortStep("Ore");
+        else if (task == "Ingot")
+            SortStep("Ingot");
+        else if (task == "Other")
+            SortStep("Other");
+        else if (task == "Special")
+            FillSpecialLoadouts();
+        else if (task == "Reactor")
+            BalanceReactors();
+
+        _taskIndex++;
+        if (_taskIndex >= _taskNames.Length)
+            _taskIndex = 0;
+    }
+
     void FillSpecialLoadouts()
     {
         if (_specialTargets.Count == 0 || _lastTransferCount >= MaxTransfersPerRun)
@@ -789,15 +982,24 @@
         if (!EnableReactorBalancing || _reactors.Count == 0 || _lastTransferCount >= MaxTransfersPerRun)
             return;
 
-        MyFixedPoint target = (MyFixedPoint)UraniumIngotsPerReactor;
-
-        for (int r = 0; r < _reactors.Count && !ShouldYield(); r++)
+        int checkedReactors = 0;
+        while (!ShouldYield() && checkedReactors < MaxReactorChecksPerTask && checkedReactors < _reactors.Count)
         {
-            IMyReactor reactor = _reactors[r];
+            if (_reactorCursor >= _reactors.Count)
+                _reactorCursor = 0;
+
+            IMyReactor reactor = _reactors[_reactorCursor];
+            _reactorCursor++;
+            checkedReactors++;
+
             if (reactor == null || !reactor.HasInventory || HasToken(reactor, TagIgnore) || HasToken(reactor, TagNoSort) || HasToken(reactor, TagNoDock))
                 continue;
 
             if (!IsAllowedGrid(reactor))
+                continue;
+
+            MyFixedPoint target = (MyFixedPoint)GetReactorUraniumTarget(reactor);
+            if (target <= (MyFixedPoint)0)
                 continue;
 
             IMyInventory reactorInventory = reactor.GetInventory(0);
@@ -822,6 +1024,23 @@
                 _reactorTransferCount++;
             }
         }
+    }
+
+    double GetReactorUraniumTarget(IMyReactor reactor)
+    {
+        string value = GetSettingValue(reactor.CustomData, "Uranium");
+        if (value == "") value = GetSettingValue(reactor.CustomData, "UraniumIngots");
+        if (value == "") value = GetSettingValue(reactor.CustomData, "ReactorUranium");
+        if (value == "") value = GetSettingValue(reactor.CustomData, "CIMReactorUranium");
+
+        double parsed;
+        if (double.TryParse(value, out parsed))
+        {
+            if (parsed < 0) parsed = 0;
+            return parsed;
+        }
+
+        return UraniumIngotsPerReactor;
     }
 
     bool FindSourceItem(string wantedKey, IMyInventory skipInventory, out IMyInventory source, out int itemIndex, out MyFixedPoint amount)
@@ -864,13 +1083,13 @@
         return false;
     }
 
-    void SortStep()
+    void SortStep(string taskCategory)
     {
         if (_sources.Count == 0 || ShouldYield())
             return;
 
         int checkedSources = 0;
-        while (!ShouldYield() && checkedSources < _sources.Count)
+        while (!ShouldYield() && checkedSources < _sources.Count && checkedSources < MaxSortSourcesPerTask)
         {
             if (_sourceCursor >= _sources.Count)
                 _sourceCursor = 0;
@@ -888,7 +1107,7 @@
                 if (!ShouldDrainInventory(sourceBlock, invIndex))
                     continue;
 
-                TrySortInventory(sourceBlock, sourceBlock.GetInventory(invIndex));
+                TrySortInventory(sourceBlock, sourceBlock.GetInventory(invIndex), taskCategory);
             }
         }
 
@@ -901,7 +1120,7 @@
         return true;
     }
 
-    void TrySortInventory(IMyTerminalBlock sourceBlock, IMyInventory source)
+    void TrySortInventory(IMyTerminalBlock sourceBlock, IMyInventory source, string taskCategory)
     {
         _items.Clear();
         source.GetItems(_items);
@@ -911,6 +1130,9 @@
             MyInventoryItem item = _items[i];
             string category = GetItemCategory(item.Type);
             if (category == "") category = "Unknown";
+
+            if (!ShouldSortCategoryInTask(category, taskCategory))
+                continue;
 
             if (IsAlreadyInCorrectTarget(sourceBlock, category))
                 continue;
@@ -922,6 +1144,20 @@
             if (source.TransferItemTo(destination.Inventory, i, null, true, null))
                 _lastTransferCount++;
         }
+    }
+
+    bool ShouldSortCategoryInTask(string category, string taskCategory)
+    {
+        if (taskCategory == "Ore")
+            return category == "Ore";
+
+        if (taskCategory == "Ingot")
+            return category == "Ingot";
+
+        if (taskCategory == "Other")
+            return category != "Ore" && category != "Ingot";
+
+        return true;
     }
 
     bool IsAlreadyInCorrectTarget(IMyTerminalBlock sourceBlock, string category)
@@ -1078,17 +1314,71 @@
 
     void CountItems()
     {
-        _counts.Clear();
-        _itemTotals.Clear();
-        for (int b = 0; b < _blocks.Count; b++)
-        {
-            IMyTerminalBlock block = _blocks[b];
-            if (block == null || !block.HasInventory || !IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block) || IsNoPullDockedGrid(block.CubeGrid))
-                continue;
+        if (_rescanInProgress && !_hasCompletedScan && _itemDisplays.Count == 0 && _statusSurfaces.Count == 0)
+            return;
 
-            for (int invIndex = 0; invIndex < block.InventoryCount; invIndex++)
-                CountInventory(block.GetInventory(invIndex));
+        if (_blocks.Count == 0)
+        {
+            _counts.Clear();
+            _itemTotals.Clear();
+            _nextCounts.Clear();
+            _nextItemTotals.Clear();
+            _countCursor = 0;
+            return;
         }
+
+        if (_countCursor == 0)
+        {
+            _nextCounts.Clear();
+            _nextItemTotals.Clear();
+            _lastMessage = "Counting inventory";
+        }
+
+        int checkedBlocks = 0;
+        while (!ShouldYieldForDisplays() && checkedBlocks < MaxCountBlocksPerRun && checkedBlocks < _blocks.Count)
+        {
+            if (_countCursor >= _blocks.Count)
+                _countCursor = 0;
+
+            IMyTerminalBlock block = _blocks[_countCursor];
+            _countCursor++;
+            checkedBlocks++;
+
+            if (block == null || !block.HasInventory || !IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block) || IsNoPullDockedGrid(block.CubeGrid))
+            {
+                if (_countCursor >= _blocks.Count)
+                    FinishItemCountCycle();
+
+                continue;
+            }
+
+            for (int invIndex = 0; invIndex < block.InventoryCount && !ShouldYieldForDisplays(); invIndex++)
+                CountInventory(block.GetInventory(invIndex));
+
+            _lastMessage = "Counting inventory " + _countCursor + "/" + _blocks.Count;
+
+            if (_countCursor >= _blocks.Count)
+            {
+                FinishItemCountCycle();
+                break;
+            }
+        }
+    }
+
+    void FinishItemCountCycle()
+    {
+        _countCursor = 0;
+        Dictionary<string, MyFixedPoint> oldCounts = _counts;
+        _counts = _nextCounts;
+        _nextCounts = oldCounts;
+        _nextCounts.Clear();
+        Dictionary<string, MyFixedPoint> oldItemTotals = _itemTotals;
+        _itemTotals = _nextItemTotals;
+        _nextItemTotals = oldItemTotals;
+        _nextItemTotals.Clear();
+        _hasCompletedCount = true;
+        _countDirty = false;
+        _lastMessage = "Inventory count complete";
     }
 
     void CountInventory(IMyInventory inv)
@@ -1105,23 +1395,26 @@
 
             string key = GetItemKey(item.Type);
             MyFixedPoint itemCurrent;
-            _itemTotals.TryGetValue(key, out itemCurrent);
-            _itemTotals[key] = itemCurrent + item.Amount;
+            _nextItemTotals.TryGetValue(key, out itemCurrent);
+            _nextItemTotals[key] = itemCurrent + item.Amount;
 
             MyFixedPoint current;
-            _counts.TryGetValue(category, out current);
-            _counts[category] = current + item.Amount;
+            _nextCounts.TryGetValue(category, out current);
+            _nextCounts[category] = current + item.Amount;
         }
     }
 
     void CountGasTanks()
     {
+        if (ShouldYieldForDisplays())
+            return;
+
         _hydrogenFilled = 0;
         _hydrogenCapacity = 0;
         _oxygenFilled = 0;
         _oxygenCapacity = 0;
 
-        for (int i = 0; i < _gasTanks.Count; i++)
+        for (int i = 0; i < _gasTanks.Count && !ShouldYieldForDisplays(); i++)
         {
             IMyGasTank tank = _gasTanks[i];
             if (tank == null || !IsAllowedGrid(tank) || HasToken(tank, TagIgnore))
@@ -1157,12 +1450,20 @@
 
     void UpdateContainerNames()
     {
-        if (!ShowFillPercentInNames)
+        if (!ShowFillPercentInNames || _allTargets.Count == 0 || ShouldYield())
             return;
 
-        for (int i = 0; i < _allTargets.Count; i++)
+        int updated = 0;
+        int checkedTargets = 0;
+        while (!ShouldYield() && checkedTargets < _allTargets.Count && updated < MaxRenameUpdatesPerRun)
         {
-            TargetBin bin = _allTargets[i];
+            if (_renameUpdateCursor >= _allTargets.Count)
+                _renameUpdateCursor = 0;
+
+            TargetBin bin = _allTargets[_renameUpdateCursor];
+            _renameUpdateCursor++;
+            checkedTargets++;
+
             if (bin == null || bin.Block == null || bin.Inventory == null)
                 continue;
 
@@ -1171,6 +1472,8 @@
             string wanted = clean + " [CIM " + percent + "%]";
             if (bin.Block.CustomName != wanted)
                 bin.Block.CustomName = wanted;
+
+            updated++;
         }
     }
 
@@ -1224,11 +1527,30 @@
         return false;
     }
 
+    bool ShouldYieldForDisplays()
+    {
+        if (Runtime.CurrentInstructionCount >= Runtime.MaxInstructionCount * DisplayInstructionBudgetPercent)
+            return true;
+
+        return false;
+    }
+
     void WriteContainerDisplays()
     {
-        for (int i = 0; i < _containerDisplays.Count; i++)
+        if (_containerDisplays.Count == 0 || ShouldYieldForDisplays())
+            return;
+
+        int updated = 0;
+        int checkedDisplays = 0;
+        while (!ShouldYieldForDisplays() && checkedDisplays < _containerDisplays.Count && updated < MaxContainerLcdUpdatesPerRun)
         {
-            ContainerDisplay display = _containerDisplays[i];
+            if (_containerLcdCursor >= _containerDisplays.Count)
+                _containerLcdCursor = 0;
+
+            ContainerDisplay display = _containerDisplays[_containerLcdCursor];
+            _containerLcdCursor++;
+            checkedDisplays++;
+
             if (display == null || display.Surface == null)
                 continue;
 
@@ -1243,6 +1565,7 @@
                 _text.AppendLine("LCD Custom Data:");
                 _text.AppendLine("Container=container name");
                 display.Surface.WriteText(_text.ToString(), false);
+                updated++;
                 continue;
             }
 
@@ -1253,6 +1576,7 @@
                 _text.AppendLine();
                 _text.AppendLine("Use exact or partial cargo/tank name.");
                 display.Surface.WriteText(_text.ToString(), false);
+                updated++;
                 continue;
             }
 
@@ -1260,6 +1584,7 @@
             if (tank != null)
             {
                 WriteTankDisplay(display.Surface, tank);
+                updated++;
                 continue;
             }
 
@@ -1278,15 +1603,19 @@
             }
             else
             {
-                for (int itemIndex = 0; itemIndex < _items.Count; itemIndex++)
+                for (int itemIndex = 0; itemIndex < _items.Count && itemIndex < MaxContainerDisplayLines; itemIndex++)
                 {
                     MyInventoryItem item = _items[itemIndex];
                     string subtype = GetFriendlySubtypeName(item.Type.SubtypeId.ToString());
                     _text.AppendLine(FormatAmount(item.Amount) + "  " + subtype);
                 }
+
+                if (_items.Count > MaxContainerDisplayLines)
+                    _text.AppendLine("...more items hidden");
             }
 
             display.Surface.WriteText(_text.ToString(), false);
+            updated++;
         }
     }
 
@@ -1308,12 +1637,12 @@
 
     void WriteItemDisplays()
     {
-        if (_itemDisplays.Count == 0 || ShouldYield())
+        if (_itemDisplays.Count == 0 || ShouldYieldForDisplays())
             return;
 
         int updated = 0;
         int checkedDisplays = 0;
-        while (!ShouldYield() && checkedDisplays < _itemDisplays.Count && updated < MaxItemLcdUpdatesPerRun)
+        while (!ShouldYieldForDisplays() && checkedDisplays < _itemDisplays.Count && updated < MaxItemLcdUpdatesPerRun)
         {
             if (_itemLcdCursor >= _itemDisplays.Count)
                 _itemLcdCursor = 0;
@@ -1343,17 +1672,39 @@
                 string name = GetSubtypeFromKey(total.Key);
                 _displayLines.Add(PadRight(name, 24) + FormatAmount(total.Value));
                 shown++;
+
+                if (shown >= MaxItemTotalLines)
+                {
+                    _displayLines.Add("");
+                    _displayLines.Add("More items not shown this pass.");
+                    break;
+                }
             }
 
             if (shown == 0)
             {
-                _displayLines.Add("No items found.");
+                if (!_hasCompletedCount)
+                {
+                    _displayLines.Add("Waiting for first full inventory count...");
+                    _displayLines.Add("LCD will not be cleared while CIM is counting.");
+                }
+                else
+                {
+                    _displayLines.Add("No " + category.ToLowerInvariant() + " items found.");
+                    _displayLines.Add("");
+                    _displayLines.Add("Put category in LCD name:");
+                    _displayLines.Add("Components [CIM:ItemsLCD]");
+                    _displayLines.Add("Ore [CIM:ItemsLCD]");
+                    _displayLines.Add("Ingot [CIM:ItemsLCD]");
+                    _displayLines.Add("All [CIM:ItemsLCD]");
+                    _displayLines.Add("Unknown [CIM:ItemsLCD]");
+                }
+            }
+
+            if (_countCursor != 0 || _countDirty)
+            {
                 _displayLines.Add("");
-                _displayLines.Add("Put category in LCD name:");
-                _displayLines.Add("Components [CIM:ItemsLCD]");
-                _displayLines.Add("Ore [CIM:ItemsLCD]");
-                _displayLines.Add("All [CIM:ItemsLCD]");
-                _displayLines.Add("Unknown [CIM:ItemsLCD]");
+                _displayLines.Add("Updating totals in small steps...");
             }
 
             WriteScrolledItemDisplay(display, _displayLines);
@@ -1378,7 +1729,7 @@
             for (int i = 0; i < lines.Count; i++)
                 _text.AppendLine(lines[i]);
 
-            display.Surface.WriteText(_text.ToString(), false);
+            WriteItemDisplayText(display, _text.ToString());
             return;
         }
 
@@ -1393,7 +1744,7 @@
         for (int i = start; i < end; i++)
             _text.AppendLine(lines[i]);
 
-        display.Surface.WriteText(_text.ToString(), false);
+        WriteItemDisplayText(display, _text.ToString());
 
         display.ScrollLine++;
         if (display.ScrollLine > lines.Count - visibleLines)
@@ -1401,6 +1752,23 @@
 
         if (display.Block != null)
             _itemLcdScrollLines[display.Block.EntityId] = display.ScrollLine;
+    }
+
+    void WriteItemDisplayText(ItemDisplay display, string output)
+    {
+        if (display == null || display.Surface == null)
+            return;
+
+        if (display.Block != null)
+        {
+            string oldOutput;
+            if (_lastItemLcdText.TryGetValue(display.Block.EntityId, out oldOutput) && oldOutput == output)
+                return;
+
+            _lastItemLcdText[display.Block.EntityId] = output;
+        }
+
+        display.Surface.WriteText(output, false);
     }
 
     bool ShouldShowItemKey(string key, string category)
@@ -1450,7 +1818,7 @@
 
     void WriteLearnedDisplays()
     {
-        if (_learnedSurfaces.Count == 0)
+        if (_learnedSurfaces.Count == 0 || ShouldYieldForDisplays())
             return;
 
         _text.Clear();
@@ -1471,13 +1839,29 @@
         AppendLearnedCategory("Unknown");
 
         string output = _text.ToString();
-        for (int i = 0; i < _learnedSurfaces.Count; i++)
-            _learnedSurfaces[i].WriteText(output, false);
+        int updated = 0;
+        int checkedSurfaces = 0;
+        while (!ShouldYieldForDisplays() && checkedSurfaces < _learnedSurfaces.Count && updated < MaxLearnedLcdUpdatesPerRun)
+        {
+            if (_learnedLcdCursor >= _learnedSurfaces.Count)
+                _learnedLcdCursor = 0;
+
+            IMyTextSurface surface = _learnedSurfaces[_learnedLcdCursor];
+            _learnedLcdCursor++;
+            checkedSurfaces++;
+
+            if (surface == null)
+                continue;
+
+            surface.WriteText(output, false);
+            updated++;
+        }
     }
 
     void AppendLearnedCategory(string category)
     {
         bool wroteHeader = false;
+        int shown = 0;
         foreach (KeyValuePair<string, string> learned in _learnedItems)
         {
             if (!learned.Key.StartsWith(category.ToLowerInvariant() + "/"))
@@ -1490,6 +1874,13 @@
             }
 
             _text.AppendLine("  " + learned.Value);
+            shown++;
+
+            if (shown >= MaxLearnedLinesPerCategory)
+            {
+                _text.AppendLine("  ...more learned items hidden");
+                break;
+            }
         }
 
         if (wroteHeader)
@@ -1560,6 +1951,7 @@
         _text.AppendLine("Casey's Inventory Management");
         _text.AppendLine(_paused ? "State: PAUSED" : "State: RUNNING");
         _text.AppendLine("Last: " + _lastMessage);
+        _text.AppendLine("Task step: " + _taskNames[_taskIndex]);
         _text.AppendLine("Sources: " + _sources.Count + " | Targets: " + _allTargets.Count + " | Specials: " + _specialTargets.Count);
         _text.AppendLine("Dock rules: " + _blockedDockedGrids.Count + " no-dock, " + _noPullDockedGrids.Count + " no-pull");
         _text.AppendLine("LCDs: " + _statusSurfaces.Count + " status, " + _containerDisplays.Count + " container, " + _itemDisplays.Count + " items, " + _learnedSurfaces.Count + " learned");
@@ -1700,6 +2092,21 @@
     bool HasToken(IMyTerminalBlock block, string token)
     {
         return Contains(block.CustomName, token) || Contains(block.CustomData, token);
+    }
+
+    bool HasAnyKeyword(IMyTerminalBlock block, string[] keywords)
+    {
+        if (block == null || keywords == null)
+            return false;
+
+        for (int i = 0; i < keywords.Length; i++)
+        {
+            string keyword = keywords[i];
+            if (keyword != "" && (Contains(block.CustomName, keyword) || Contains(block.CustomData, keyword)))
+                return true;
+        }
+
+        return false;
     }
 
     bool HasNoPullToken(IMyTerminalBlock block)
