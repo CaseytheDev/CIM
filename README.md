@@ -2,9 +2,25 @@
 
 CIM is a **Space Engineers Programmable Block inventory management script**.
 
+It was made specifically for the **Stone Industries Space Engineers server**.
+
 It sorts cargo, manages LCDs, tracks whole-grid item totals, supports special stocked containers, helps with modded item names, can top up reactors, and can avoid docked ships when configured.
 
 > Paste the script into a **Programmable Block**. No timer block is required.
+
+## Support
+
+Need help or want to report an issue?
+
+Join the Stone Industries Discord:
+
+**SI Discord:** https://discord.gg/sigaming
+
+Join my discord for support and suggestions!
+
+> **My Discord:** https://discord.gg/RsH33Wr6Vy
+
+Replace the invite above with the real support invite before publishing.
 
 ---
 
