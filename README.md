@@ -20,13 +20,12 @@ Join my discord for support and suggestions!
 
 > **My Discord:** https://discord.gg/RsH33Wr6Vy
 
-Replace the invite above with the real support invite before publishing.
 
 ---
 
 ## Quick install from GitHub
 
-1. Open **CaseysInventoryManagement.cs** in this GitHub repository.
+1. Open **CIM.cs** in this GitHub repository.
 2. Click **Raw**.
 3. Select all text and copy it.
 4. In Space Engineers, build or open a **Programmable Block**.
