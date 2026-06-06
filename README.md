@@ -14,7 +14,7 @@ Need help or want to report an issue?
 
 Join the Stone Industries Discord:
 
-**SI Discord:** https://discord.gg/sigaming
+> **SI Discord:** https://discord.gg/sigaming
 
 Join my discord for support and suggestions!
 
