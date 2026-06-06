@@ -102,28 +102,29 @@ Container=Hydrogen Tank
 
 ### Whole-grid totals LCD
 
-Name an LCD:
+Put the item type in the LCD name/title with `[CIM:ItemsLCD]`.
+
+Component LCD example:
 
 ```text
-LCD [CIM:ItemsLCD]
+Components [CIM:ItemsLCD]
 ```
 
-Put this in the LCD Custom Data:
+Ore LCD example:
 
 ```text
-Category=Component
+Ore [CIM:ItemsLCD]
 ```
 
 Other choices:
 
 ```text
-Category=Ore
-Category=Ingot
-Category=Ammo
-Category=Tool
-Category=Bottle
-Category=All
-Category=Unknown
+Ingots [CIM:ItemsLCD]
+Ammo [CIM:ItemsLCD]
+Tools [CIM:ItemsLCD]
+Bottles [CIM:ItemsLCD]
+All [CIM:ItemsLCD]
+Unknown [CIM:ItemsLCD]
 ```
 
 This shows totals from the whole managed grid, not just one box.
@@ -159,17 +160,6 @@ LCD [CIM:LearnedLCD]
 ```
 
 That LCD shows the item names CIM has seen. You can copy those names into stocked containers.
-
-These Stone Industries tech items are also renamed on LCDs:
-
-| Item | Shows as |
-| --- | --- |
-| `Tech2x` | Common Tech |
-| `Tech4x` | Rare Tech |
-| `Tech16x` | Prosonic |
-| `Tech32x` | Prosonic Tech |
-
-They sort as components.
 
 ---
 
