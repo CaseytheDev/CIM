@@ -34,6 +34,7 @@
     const int RescanEveryRuns = 30;
     const int RenameEveryRuns = 10;
     const int MaxItemLcdUpdatesPerRun = 2;
+    const int ItemLcdVisibleLines = 18;
     const double RuntimeCheckLimitMs = 0.80;
     const double InstructionBudgetPercent = 0.80;
 
@@ -67,6 +68,8 @@
     Dictionary<string, MyFixedPoint> _counts = new Dictionary<string, MyFixedPoint>();
     Dictionary<string, MyFixedPoint> _itemTotals = new Dictionary<string, MyFixedPoint>();
     Dictionary<string, string> _learnedItems = new Dictionary<string, string>();
+    Dictionary<long, int> _itemLcdScrollLines = new Dictionary<long, int>();
+    List<string> _displayLines = new List<string>();
     StringBuilder _text = new StringBuilder(4096);
 
     int _runCounter;
@@ -120,6 +123,7 @@
         public IMyTerminalBlock Block;
         public IMyTextSurface Surface;
         public string Category;
+        public int ScrollLine;
     }
 
     public Program()
@@ -688,6 +692,7 @@
         display.Block = block;
         display.Surface = surface;
         display.Category = GetItemDisplayCategory(block);
+        _itemLcdScrollLines.TryGetValue(block.EntityId, out display.ScrollLine);
         _itemDisplays.Add(display);
     }
 
@@ -987,7 +992,9 @@
         if (EndsWith(typeId, "_PhysicalGunObject")) return "Tool";
 
         string subtype = NormalizeSubtypeName(type.SubtypeId.ToString());
-        if (subtype == "tech2x" || subtype == "tech4x" || subtype == "tech16x" || subtype == "tech32x")
+        if (subtype == "tech2x" || subtype == "tech4x" || subtype == "tech8x" || subtype == "tech16x" || subtype == "tech32x" ||
+            subtype == "tellerium" || subtype == "telleriumtech" || subtype == "prosonic" || subtype == "prosonictech" ||
+            subtype == "aryxlynxonfusioncomponent" || subtype == "adaptivedynocapacitor" || subtype == "graphinegrid" || subtype == "zonechip")
             return "Component";
 
         // Fallbacks for mods that use custom object builders with recognizable names.
@@ -1322,10 +1329,10 @@
             if (category == "")
                 category = "All";
 
-            _text.Clear();
-            _text.AppendLine("CIM Inventory Totals");
-            _text.AppendLine("Showing: " + category);
-            _text.AppendLine();
+            _displayLines.Clear();
+            _displayLines.Add("CIM Inventory Totals");
+            _displayLines.Add("Showing: " + category);
+            _displayLines.Add("");
 
             int shown = 0;
             foreach (KeyValuePair<string, MyFixedPoint> total in _itemTotals)
@@ -1334,24 +1341,66 @@
                     continue;
 
                 string name = GetSubtypeFromKey(total.Key);
-                _text.AppendLine(PadRight(name, 24) + FormatAmount(total.Value));
+                _displayLines.Add(PadRight(name, 24) + FormatAmount(total.Value));
                 shown++;
             }
 
             if (shown == 0)
             {
-                _text.AppendLine("No items found.");
-                _text.AppendLine();
-                _text.AppendLine("Put category in LCD name:");
-                _text.AppendLine("Components [CIM:ItemsLCD]");
-                _text.AppendLine("Ore [CIM:ItemsLCD]");
-                _text.AppendLine("All [CIM:ItemsLCD]");
-                _text.AppendLine("Unknown [CIM:ItemsLCD]");
+                _displayLines.Add("No items found.");
+                _displayLines.Add("");
+                _displayLines.Add("Put category in LCD name:");
+                _displayLines.Add("Components [CIM:ItemsLCD]");
+                _displayLines.Add("Ore [CIM:ItemsLCD]");
+                _displayLines.Add("All [CIM:ItemsLCD]");
+                _displayLines.Add("Unknown [CIM:ItemsLCD]");
             }
 
-            display.Surface.WriteText(_text.ToString(), false);
+            WriteScrolledItemDisplay(display, _displayLines);
             updated++;
         }
+    }
+
+    void WriteScrolledItemDisplay(ItemDisplay display, List<string> lines)
+    {
+        int visibleLines = ItemLcdVisibleLines;
+        if (visibleLines < 4)
+            visibleLines = 4;
+
+        _text.Clear();
+
+        if (lines.Count <= visibleLines)
+        {
+            display.ScrollLine = 0;
+            if (display.Block != null)
+                _itemLcdScrollLines[display.Block.EntityId] = display.ScrollLine;
+
+            for (int i = 0; i < lines.Count; i++)
+                _text.AppendLine(lines[i]);
+
+            display.Surface.WriteText(_text.ToString(), false);
+            return;
+        }
+
+        if (display.ScrollLine < 0 || display.ScrollLine > lines.Count - visibleLines)
+            display.ScrollLine = 0;
+
+        int start = display.ScrollLine;
+        int end = start + visibleLines;
+        if (end > lines.Count)
+            end = lines.Count;
+
+        for (int i = start; i < end; i++)
+            _text.AppendLine(lines[i]);
+
+        display.Surface.WriteText(_text.ToString(), false);
+
+        display.ScrollLine++;
+        if (display.ScrollLine > lines.Count - visibleLines)
+            display.ScrollLine = 0;
+
+        if (display.Block != null)
+            _itemLcdScrollLines[display.Block.EntityId] = display.ScrollLine;
     }
 
     bool ShouldShowItemKey(string key, string category)
@@ -1379,8 +1428,14 @@
         string normalized = NormalizeSubtypeName(subtype);
         if (normalized == "tech2x") return "Common Tech";
         if (normalized == "tech4x") return "Rare Tech";
-        if (normalized == "tech16x") return "Prosonic";
+        if (normalized == "tech8x") return "Elite Tech";
+        if (normalized == "tech16x") return "Prosonic Tech";
         if (normalized == "tech32x") return "Prosonic Tech";
+        if (normalized == "tellerium" || normalized == "telleriumtech" || normalized == "prosonic" || normalized == "prosonictech") return "Prosonic Tech";
+        if (normalized == "aryxlynxonfusioncomponent") return "Fusion Coils";
+        if (normalized == "adaptivedynocapacitor") return "Dyno Capacitor";
+        if (normalized == "graphinegrid") return "Graphine Grid";
+        if (normalized == "zonechip") return "Zone Chips";
 
         return subtype;
     }
