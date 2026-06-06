@@ -1,11 +1,10 @@
 // Casey's Inventory Management (CIM)
 // Original Space Engineers Programmable Block script.
-// Paste this whole file into a programmable block, compile, then run with "help".
-
+// Paste this whole file into a programmable block and compile.
     // =========================================================
     // Setup tags
     // =========================================================
-    // Cargo categories: [CIM:Ore] [CIM:Ingot] [CIM:Component] [CIM:Tool] [CIM:Ammo] [CIM:Bottle] [CIM:All]
+    // Cargo categories: [CIM:Ore] [CIM:Ingot] [CIM:Component] [CIM:Tool] [CIM:Ammo] [CIM:Bottle] [CIM:All] [CIM:Unknown]
     // If categories are missing, CIM can auto-tag empty/unlabeled cargo containers for you.
     // Special loadouts: [CIM:Special] on cargo + Custom Data lines like Component/SteelPlate=200
 
@@ -16,6 +15,7 @@
     const string TagAmmo = "[CIM:Ammo]";
     const string TagBottle = "[CIM:Bottle]";
     const string TagAll = "[CIM:All]";
+    const string TagUnknown = "[CIM:Unknown]";
     const string TagSpecial = "[CIM:Special]";
     const string TagStatus = "[CIM:Status]";
     const string TagContainerLCD = "[CIM:ContainerLCD]";
@@ -26,6 +26,8 @@
     const string TagDrain = "[CIM:Drain]";
     const string TagNoSort = "[CIM:NoSort]";
     const string TagNoDock = "[CIM:NoDock]";
+    const string TagNoPull = "[CIM:NoPull]";
+    const string TagNoPullShort = "[NoPull]";
 
     // Performance knobs. Lower MaxTransfersPerRun for giant bases.
     const int MaxTransfersPerRun = 16;
@@ -37,6 +39,7 @@
 
     // Behavior knobs.
     bool IncludeConnectedSameConstruct = true;
+    bool OnlySameFaction = true;
     bool DrainUntaggedCargo = true;
     bool ShowFillPercentInNames = true;
     bool AutoAssignContainers = true;
@@ -49,6 +52,7 @@
     List<IMyTerminalBlock> _blocks = new List<IMyTerminalBlock>();
     List<IMyTerminalBlock> _sources = new List<IMyTerminalBlock>();
     List<IMyCubeGrid> _blockedDockedGrids = new List<IMyCubeGrid>();
+    List<IMyCubeGrid> _noPullDockedGrids = new List<IMyCubeGrid>();
     List<IMyGasTank> _gasTanks = new List<IMyGasTank>();
     List<IMyReactor> _reactors = new List<IMyReactor>();
     List<IMyTextSurface> _statusSurfaces = new List<IMyTextSurface>();
@@ -85,12 +89,12 @@
 
     string[] _categoryNames = new string[]
     {
-        "Ore", "Ingot", "Component", "Tool", "Ammo", "Bottle", "All"
+        "Ore", "Ingot", "Component", "Tool", "Ammo", "Bottle", "All", "Unknown"
     };
 
     string[] _autoAssignOrder = new string[]
     {
-        "All", "Component", "Ore", "Ingot", "Tool", "Ammo", "Bottle"
+        "All", "Unknown", "Component", "Ore", "Ingot", "Tool", "Ammo", "Bottle"
     };
 
     class TargetBin
@@ -161,7 +165,7 @@
         }
         else
         {
-            _lastMessage = "Unknown command: " + argument;
+            _lastMessage = "Unknown argument: " + argument;
         }
 
         _lastTransferCount = 0;
@@ -214,6 +218,7 @@
         InitTargets();
         _sources.Clear();
         _blockedDockedGrids.Clear();
+        _noPullDockedGrids.Clear();
         _gasTanks.Clear();
         _reactors.Clear();
         _statusSurfaces.Clear();
@@ -233,6 +238,15 @@
             IMyTerminalBlock block = _blocks[i];
             if (!IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block))
                 continue;
+
+            if (IsNoPullDockedGrid(block.CubeGrid))
+            {
+                IMyReactor noPullReactor = block as IMyReactor;
+                if (noPullReactor != null)
+                    _reactors.Add(noPullReactor);
+
+                continue;
+            }
 
             RegisterStatusSurface(block);
             RegisterContainerDisplay(block);
@@ -371,6 +385,12 @@
 
     bool IsAllowedGrid(IMyTerminalBlock block)
     {
+        if (block == null)
+            return false;
+
+        if (OnlySameFaction && !IsSameFactionOrMine(block))
+            return false;
+
         if (IsBlockedDockedGrid(block.CubeGrid))
             return false;
 
@@ -378,6 +398,18 @@
             return block.IsSameConstructAs(Me);
 
         return block.CubeGrid == Me.CubeGrid;
+    }
+
+    bool IsSameFactionOrMine(IMyTerminalBlock block)
+    {
+        if (block == null)
+            return false;
+
+        if (block.OwnerId == 0)
+            return true;
+
+        MyRelationsBetweenPlayerAndBlock relation = block.GetUserRelationToOwner(Me.OwnerId);
+        return relation == MyRelationsBetweenPlayerAndBlock.Owner || relation == MyRelationsBetweenPlayerAndBlock.FactionShare;
     }
 
     void FindBlockedDockedGrids()
@@ -392,13 +424,40 @@
                 continue;
 
             if (!HasToken(connector, TagNoDock) && !HasToken(connector, TagNoSort))
+            {
+                if (!HasNoPullToken(connector))
+                    continue;
+
+                if (connector.Status != MyShipConnectorStatus.Connected || connector.OtherConnector == null)
+                    continue;
+
+                if (connector.CubeGrid == Me.CubeGrid)
+                    AddNoPullDockedGrid(connector.OtherConnector.CubeGrid);
+                else
+                    AddNoPullDockedGrid(connector.CubeGrid);
+
                 continue;
+            }
 
             if (connector.Status != MyShipConnectorStatus.Connected || connector.OtherConnector == null)
                 continue;
 
             AddBlockedDockedGrid(connector.OtherConnector.CubeGrid);
         }
+    }
+
+    void AddNoPullDockedGrid(IMyCubeGrid grid)
+    {
+        if (grid == null || grid == Me.CubeGrid)
+            return;
+
+        for (int i = 0; i < _noPullDockedGrids.Count; i++)
+        {
+            if (_noPullDockedGrids[i] == grid)
+                return;
+        }
+
+        _noPullDockedGrids.Add(grid);
     }
 
     void AddBlockedDockedGrid(IMyCubeGrid grid)
@@ -420,6 +479,17 @@
         for (int i = 0; i < _blockedDockedGrids.Count; i++)
         {
             if (_blockedDockedGrids[i] == grid)
+                return true;
+        }
+
+        return false;
+    }
+
+    bool IsNoPullDockedGrid(IMyCubeGrid grid)
+    {
+        for (int i = 0; i < _noPullDockedGrids.Count; i++)
+        {
+            if (_noPullDockedGrids[i] == grid)
                 return true;
         }
 
@@ -481,6 +551,7 @@
         if (Contains(data, TagAmmo) || Contains(data, "ammo")) return "Ammo";
         if (Contains(data, TagBottle) || Contains(data, "bottles")) return "Bottle";
         if (Contains(data, TagAll) || Contains(data, "all items")) return "All";
+        if (Contains(data, TagUnknown) || Contains(data, "unknown items")) return "Unknown";
         return "";
     }
 
@@ -649,15 +720,19 @@
 
     string GetItemDisplayCategory(IMyTerminalBlock block)
     {
+        string name = block.CustomName;
+        name = RemoveToken(name, TagItemsLCD);
+        name = RemoveFillTag(name).Trim();
+        string nameCategory = NormalizeCategory(name);
+        if (nameCategory != "All" || Contains(name, "all"))
+            return nameCategory;
+
         string category = GetSettingValue(block.CustomData, "Category");
         if (category == "") category = GetSettingValue(block.CustomData, "Type");
         if (category == "") category = GetSettingValue(block.CustomData, "Show");
         if (category != "") return NormalizeCategory(category);
 
-        string name = block.CustomName;
-        name = RemoveToken(name, TagItemsLCD);
-        name = RemoveFillTag(name).Trim();
-        return NormalizeCategory(name);
+        return "All";
     }
 
     void FillSpecialLoadouts()
@@ -830,7 +905,7 @@
         {
             MyInventoryItem item = _items[i];
             string category = GetItemCategory(item.Type);
-            if (category == "") category = "All";
+            if (category == "") category = "Unknown";
 
             if (IsAlreadyInCorrectTarget(sourceBlock, category))
                 continue;
@@ -861,9 +936,13 @@
         TargetBin best = FindBestTarget(_targets[category], source, item);
         if (best != null) return best;
 
-        // Only use [CIM:All] for unknown items or when no typed container exists.
-        // Example: Nickel ingots should not overflow into All just because an ingot box is full.
-        if (category != "All" && _targets[category].Count == 0)
+        // [CIM:All] is the general fallback when a typed container is missing.
+        // If a typed container exists but is full/limited, leave the item where it is.
+        if (category != "All" && category != "Unknown" && _targets[category].Count == 0)
+            return FindBestTarget(_targets["All"], source, item);
+
+        // Unknown items prefer [CIM:Unknown], then [CIM:All] if no Unknown box exists.
+        if (category == "Unknown" && _targets["Unknown"].Count == 0)
             return FindBestTarget(_targets["All"], source, item);
 
         if (category == "All")
@@ -931,7 +1010,7 @@
             return;
 
         string category = GetItemCategory(type);
-        if (category == "") category = "Other";
+        if (category == "") category = "Unknown";
 
         _learnedItems[key] = category + "/" + type.SubtypeId.ToString() + " = " + type.TypeId.ToString();
         _learnedNewThisRun++;
@@ -941,7 +1020,7 @@
     {
         string category = GetItemCategory(type);
         string subtype = type.SubtypeId.ToString();
-        if (category == "") category = "Other";
+        if (category == "") category = "Unknown";
         return (category + "/" + subtype).ToLowerInvariant();
     }
 
@@ -997,7 +1076,7 @@
         for (int b = 0; b < _blocks.Count; b++)
         {
             IMyTerminalBlock block = _blocks[b];
-            if (block == null || !block.HasInventory || !IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block))
+            if (block == null || !block.HasInventory || !IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoSortBlocked(block) || IsNoPullDockedGrid(block.CubeGrid))
                 continue;
 
             for (int invIndex = 0; invIndex < block.InventoryCount; invIndex++)
@@ -1015,7 +1094,7 @@
             LearnItem(item.Type);
 
             string category = GetItemCategory(item.Type);
-            if (category == "") category = "Other";
+            if (category == "") category = "Unknown";
 
             string key = GetItemKey(item.Type);
             MyFixedPoint itemCurrent;
@@ -1263,10 +1342,11 @@
             {
                 _text.AppendLine("No items found.");
                 _text.AppendLine();
-                _text.AppendLine("LCD Custom Data example:");
-                _text.AppendLine("Category=Component");
-                _text.AppendLine("Category=Ore");
-                _text.AppendLine("Category=All");
+                _text.AppendLine("Put category in LCD name:");
+                _text.AppendLine("Components [CIM:ItemsLCD]");
+                _text.AppendLine("Ore [CIM:ItemsLCD]");
+                _text.AppendLine("All [CIM:ItemsLCD]");
+                _text.AppendLine("Unknown [CIM:ItemsLCD]");
             }
 
             display.Surface.WriteText(_text.ToString(), false);
@@ -1333,7 +1413,7 @@
         AppendLearnedCategory("Ammo");
         AppendLearnedCategory("Bottle");
         AppendLearnedCategory("Tool");
-        AppendLearnedCategory("Other");
+        AppendLearnedCategory("Unknown");
 
         string output = _text.ToString();
         for (int i = 0; i < _learnedSurfaces.Count; i++)
@@ -1402,7 +1482,7 @@
         for (int i = 0; i < _blocks.Count; i++)
         {
             IMyTerminalBlock block = _blocks[i];
-            if (block == null || !IsAllowedGrid(block) || HasToken(block, TagIgnore))
+            if (block == null || !IsAllowedGrid(block) || HasToken(block, TagIgnore) || IsNoPullDockedGrid(block.CubeGrid))
                 continue;
 
             if (!(block is IMyCargoContainer) && !(block is IMyGasTank))
@@ -1426,12 +1506,14 @@
         _text.AppendLine(_paused ? "State: PAUSED" : "State: RUNNING");
         _text.AppendLine("Last: " + _lastMessage);
         _text.AppendLine("Sources: " + _sources.Count + " | Targets: " + _allTargets.Count + " | Specials: " + _specialTargets.Count);
+        _text.AppendLine("Dock rules: " + _blockedDockedGrids.Count + " no-dock, " + _noPullDockedGrids.Count + " no-pull");
         _text.AppendLine("LCDs: " + _statusSurfaces.Count + " status, " + _containerDisplays.Count + " container, " + _itemDisplays.Count + " items, " + _learnedSurfaces.Count + " learned");
         _text.AppendLine("Auto-assigned: " + _autoAssignedCount + " | Unassigned cargo: " + _unassignedCargo.Count);
         _text.AppendLine("Learned items: " + _learnedItems.Count + " | New: " + _learnedNewThisRun);
         _text.AppendLine("Transfers/run: " + _lastTransferCount + " (special " + _specialTransferCount + ", reactor " + _reactorTransferCount + ") | Total: " + _totalTransfers);
         _text.AppendLine("Runtime: " + Runtime.LastRunTimeMs.ToString("0.000") + " ms");
         _text.AppendLine("Budget: " + RuntimeCheckLimitMs.ToString("0.00") + " ms / " + (InstructionBudgetPercent * 100d).ToString("0") + "% instructions");
+        _text.AppendLine("Access: " + (OnlySameFaction ? "own/faction blocks only" : "all accessible blocks"));
         _text.AppendLine();
 
         _text.AppendLine("Gas Tanks:");
@@ -1455,18 +1537,15 @@
         AppendCount("Tool");
         AppendCount("Ammo");
         AppendCount("Bottle");
-        AppendCount("Other");
+        AppendCount("Unknown");
 
         if (showHelp)
         {
             _text.AppendLine();
-            _text.AppendLine("Optional run arguments:");
-            _text.AppendLine("  status, rescan, pause, resume, rename");
-            _text.AppendLine("  Normal use needs no argument.");
-            _text.AppendLine();
             _text.AppendLine("Container tags:");
             _text.AppendLine("  [CIM:Ore] [CIM:Ingot] [CIM:Component]");
-            _text.AppendLine("  [CIM:Tool] [CIM:Ammo] [CIM:Bottle] [CIM:All]");
+            _text.AppendLine("  [CIM:Tool] [CIM:Ammo] [CIM:Bottle]");
+            _text.AppendLine("  [CIM:All] [CIM:Unknown]");
             _text.AppendLine("  Missing categories can be auto-tagged as [AUTO]");
             _text.AppendLine("  [CIM:P1] priority, lower number fills first");
             _text.AppendLine();
@@ -1482,14 +1561,16 @@
             _text.AppendLine();
             _text.AppendLine("Tanks/reactors:");
             _text.AppendLine("  Container LCDs can target gas tanks too");
-            _text.AppendLine("  Reactors are topped to uranium target");
+            _text.AppendLine("  Reactors are topped on owned/faction grids");
+            _text.AppendLine("  Allied/enemy-owned blocks are skipped");
             _text.AppendLine("  [CIM:NoDock] on connector skips docked ship");
+            _text.AppendLine("  [NoPull] on connector only tops reactors");
             _text.AppendLine();
             _text.AppendLine("Learning:");
             _text.AppendLine("  [CIM:LearnedLCD] shows discovered item names");
             _text.AppendLine("  Modded components are learned when seen");
             _text.AppendLine();
-            _text.AppendLine("Utility: [CIM:Status] [CIM:ContainerLCD] [CIM:ItemsLCD] [CIM:LearnedLCD] [CIM:Ignore] [CIM:Drain] [CIM:NoSort] [CIM:NoDock]");
+            _text.AppendLine("Utility: [CIM:Status] [CIM:ContainerLCD] [CIM:ItemsLCD] [CIM:LearnedLCD] [CIM:Ignore] [CIM:Drain] [CIM:NoSort] [CIM:NoDock] [NoPull]");
         }
 
         string output = _text.ToString();
@@ -1540,7 +1621,7 @@
         if (value == "tool" || value == "tools" || value.Contains("tool")) return "Tool";
         if (value == "ammo" || value == "ammunition" || value.Contains("ammo")) return "Ammo";
         if (value == "bottle" || value == "bottles" || value.Contains("bottle")) return "Bottle";
-        if (value == "other" || value == "misc" || value.Contains("other")) return "Other";
+        if (value == "unknown" || value == "other" || value == "misc" || value.Contains("unknown") || value.Contains("other")) return "Unknown";
 
         return "All";
     }
@@ -1564,6 +1645,11 @@
     bool HasToken(IMyTerminalBlock block, string token)
     {
         return Contains(block.CustomName, token) || Contains(block.CustomData, token);
+    }
+
+    bool HasNoPullToken(IMyTerminalBlock block)
+    {
+        return HasToken(block, TagNoPull) || HasToken(block, TagNoPullShort);
     }
 
     bool HasAnyCimTag(IMyTerminalBlock block)
