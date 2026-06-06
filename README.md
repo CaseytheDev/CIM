@@ -217,7 +217,7 @@ It does **not** dump all uranium into reactors.
 
 ## Performance settings
 
-For very large bases, lower these near the top of **CaseysInventoryManagement.cs**:
+For very large bases, lower these near the top of **CIM.cs**:
 
 ```csharp
 const int MaxTransfersPerRun = 16;
