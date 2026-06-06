@@ -31,7 +31,7 @@
     const string TagNoPullShort = "[NoPull]";
 
     // =========================================================
-    // ISYS-style shared configuration
+    // shared configuration
     // =========================================================
     // These are plain-name keywords CIM also understands, so setup can feel closer to ISYS.
 
