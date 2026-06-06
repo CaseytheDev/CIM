@@ -162,22 +162,6 @@ LCD [CIM:LearnedLCD]
 
 That LCD shows the item names CIM has seen. You can copy those names into stocked containers.
 
-These Stone Industries tech items are also renamed on LCDs:
-
-| Item | Shows as |
-| --- | --- |
-| `Tech2x` | Common Tech |
-| `Tech4x` | Rare Tech |
-| `Tech8x` | Elite Tech |
-| `Tech16x` | Prosonic Tech |
-| `Tech32x` | Prosonic Tech |
-| Tellerium / Prosonic | Prosonic Tech |
-| `aryxlynxon_fusioncomponent` | Fusion Coils |
-| `adaptivedynocapacitor` | Dyno Capacitor |
-| `graphinegrid` | Graphine Grid |
-| `zonechip` | Zone Chips |
-
-They sort as components.
 
 ---
 
