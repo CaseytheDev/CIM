@@ -2,6 +2,8 @@
 
 CIM is a Space Engineers inventory script built for the **Stone Industries** server.
 
+> **Work in progress:** CIM is still being built and tested. So far it is being tuned to produce less lag than ISY's Inventory Manager on current servers, especially since ISY's has not had a major update in at least 3 years.
+
 It runs in a Programmable Block and handles the usual base inventory stuff: sorting cargo, keeping some containers stocked, showing cargo/tank info on LCDs, listing item totals, and topping reactors with a small amount of uranium.
 
 No timer block needed.
@@ -57,6 +59,21 @@ Large Cargo [CIM:Ingot]
 Large Cargo [CIM:All]
 Large Cargo [CIM:Unknown]
 ```
+
+ISYS-style plain names also work:
+
+```text
+Large Cargo Ores
+Large Cargo Ingots
+Large Cargo Components
+Large Cargo Tools
+Large Cargo Ammo
+Large Cargo Bottles
+Large Cargo All Items
+Large Cargo Unknown Items
+```
+
+`Locked`, `Hidden`, `[No Sorting]`, `[No IIM]`, and `[No CIM]` are also understood as skip/no-sort style keywords.
 
 If you do not tag any cargo, CIM can try to auto-tag empty/unlabeled cargo containers.
 
@@ -199,6 +216,18 @@ Default is:
 5 uranium ingots per reactor
 ```
 
+Change the normal amount near the top of the script:
+
+```csharp
+double UraniumIngotsPerReactor = 5;
+```
+
+Or override one reactor by putting this in that reactor's Custom Data:
+
+```text
+Uranium=10
+```
+
 It does not dump all uranium into reactors.
 
 Allied/enemy-owned reactors are skipped unless they are actually shared to your faction.
@@ -209,11 +238,27 @@ Allied/enemy-owned reactors are skipped unless they are actually shared to your 
 
 For big bases, lower these near the top of the script:
 
+CIM works in task steps so it does not try to do everything at once. The normal order is gas checks, ore sorting, ingot sorting, other sorting, special container restocking, then reactor top-off.
+
+Item total LCDs are cached. CIM only writes new item LCD text when the displayed totals/text actually changed, so LCDs should not keep blanking while inventory is still being counted.
+
 ```csharp
 const int MaxTransfersPerRun = 6;
+const int RescanEveryRuns = 300;
+const int MaxRenameUpdatesPerRun = 6;
+const int CountEveryRuns = 1;
+const int CountRefreshEveryRuns = 60;
+const int LcdEveryRuns = 1;
+const int MaxRescanBlocksPerRun = 200;
+const int MaxCountBlocksPerRun = 16;
+const int MaxSortSourcesPerTask = 10;
+const int MaxReactorChecksPerTask = 8;
+const int MaxContainerLcdUpdatesPerRun = 1;
+const int MaxContainerDisplayLines = 60;
 const int MaxItemLcdUpdatesPerRun = 1;
+const int MaxItemTotalLines = 80;
 const int ItemLcdVisibleLines = 18;
-const double RuntimeCheckLimitMs = 0.50;
+const double RuntimeCheckLimitMs = 1.00;
 const double InstructionBudgetPercent = 0.60;
 ```
 
